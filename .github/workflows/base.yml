@@ -33,7 +33,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.ghcr-token }}
-      - uses: docker/bake-action@v6
+      - uses: docker/bake-action@v7
         with:
           pull: true
           push: true
