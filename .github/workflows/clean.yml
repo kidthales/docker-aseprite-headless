@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
   
 jobs:
-  ghcr-clean-up:
+  ghcr-cleanup:
     runs-on: ubuntu-latest
     steps:
       - uses: dataaxiom/ghcr-cleanup-action@v1
