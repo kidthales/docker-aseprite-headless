@@ -2,9 +2,9 @@ name: Clean
 
 on:
   workflow_dispatch: ~
-  #schedule:
-  #  # UTC
-  #  - cron: 20 16 * * *
+  schedule:
+    # UTC
+    - cron: 20 16 * * *
 
 concurrency:
   group: ${{ github.workflow }}
@@ -16,6 +16,5 @@ jobs:
     steps:
       - uses: dataaxiom/ghcr-cleanup-action@v1
         with:
-          dry-run: true
           package: aseprite
           delete-untagged: true
