@@ -13,9 +13,10 @@ concurrency:
 jobs:
   batch-build-and-push:
     strategy:
+      max-parallel: 1
       fail-fast: false
       matrix:
-        aseprite-git-ref: [main, v1.3.15.5, v1.3.16, v1.3.16.1, v1.3.17, v1.3.17.1]
+        aseprite-git-ref: [v1.3.15.5, v1.3.16.1, v1.3.17.1, main]
     uses: ./.github/workflows/base.yml
     with:
       aseprite-git-ref: ${{ matrix.aseprite-git-ref }}
