@@ -1,4 +1,4 @@
-#syntax=docker/dockerfile:1.4
+#syntax=docker/dockerfile:1
 
 FROM builder-upstream AS builder
 
@@ -27,10 +27,11 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 ARG aseprite_git_ref=main
 ARG aseprite_build_type=Release
 
-RUN git clone -b "${aseprite_git_ref}" --recursive https://github.com/aseprite/aseprite.git /opt/aseprite; \
-	mkdir -p /opt/aseprite/build
+RUN git clone -b "${aseprite_git_ref}" --recursive https://github.com/aseprite/aseprite.git /opt/aseprite
 
-RUN	cd /opt/aseprite/build && export CC=clang && export CXX=clang++ && cmake \
+WORKDIR /opt/aseprite/build
+
+RUN export CC=clang && export CXX=clang++ && cmake \
 	-DCMAKE_BUILD_TYPE="${aseprite_build_type}" \
 	-DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
 	-DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ \
@@ -64,10 +65,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --link --chmod=755 entrypoint.sh /docker-aseprite-entrypoint
 
-RUN ln -s /docker-aseprite-entrypoint /usr/local/bin/docker-aseprite-entrypoint
-
-# Smoke test.
-RUN /docker-aseprite-entrypoint --help
+# Symlink entrypoint and perform smoke test.
+RUN ln -s /docker-aseprite-entrypoint /usr/local/bin/docker-aseprite-entrypoint \
+	&& /docker-aseprite-entrypoint --help
 
 WORKDIR /workspace
 
