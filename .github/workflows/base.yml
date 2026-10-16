@@ -127,7 +127,7 @@ jobs:
           severity: 'CRITICAL'
 
       - name: Trigger Downstream GDTK Build
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         continue-on-error: true
         with:
           token: ${{ secrets.dispatch-pat || secrets.ghcr-token }}
