@@ -1,6 +1,6 @@
 #syntax=docker/dockerfile:1
 
-FROM builder-upstream AS builder
+FROM ubuntu:24.04 AS builder
 
 # Install dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -42,7 +42,7 @@ RUN export CC=clang && export CXX=clang++ && cmake \
 	.. \
 	&& ninja aseprite
 
-FROM app-upstream AS app
+FROM ubuntu:24.04 AS app
 
 LABEL org.opencontainers.image.source=https://github.com/kidthales/docker-aseprite-headless
 LABEL org.opencontainers.image.description="Provides an Aseprite binary suitable for CLI use cases such as in build scripts or automated workflows like GitHub Actions."
