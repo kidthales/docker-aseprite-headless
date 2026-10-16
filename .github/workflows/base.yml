@@ -34,6 +34,11 @@ jobs:
     outputs:
       skip_build: ${{ steps.check-tag.outputs.skip_build }}
     steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ghcr-token }}
       - name: Check if image tag already exists in GHCR
         id: check-tag
         run: |
