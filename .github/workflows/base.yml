@@ -23,9 +23,6 @@ on:
       ghcr-token:
         required: true
         description: Access token to the GitHub Container Registry associated with the repository owner.
-      dispatch-pat:
-        required: false
-        description: Access token to trigger repository_dispatch on downstream repositories.
 
 jobs:
   check-tag:
@@ -130,12 +127,3 @@ jobs:
           exit-code: '1'
           ignore-unfixed: false
           severity: 'CRITICAL'
-
-      - name: Trigger Downstream GDTK Build
-        uses: peter-evans/repository-dispatch@v3
-        continue-on-error: true
-        with:
-          token: ${{ secrets.dispatch-pat || secrets.ghcr-token }}
-          repository: ${{ github.repository_owner }}/docker-game-development-toolkit
-          event-type: aseprite-published
-          client-payload: '{"aseprite_git_ref": "${{ inputs.aseprite-git-ref }}"}'
