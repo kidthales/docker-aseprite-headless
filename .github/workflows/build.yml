@@ -26,3 +26,4 @@ jobs:
       aseprite-build-type: ${{ github.event.inputs.aseprite-build-type }}
     secrets:
       ghcr-token: ${{ secrets.GITHUB_TOKEN }}
+      dispatch-pat: ${{ secrets.DISPATCH_PAT || secrets.CR_PAT || secrets.GITHUB_TOKEN }}
