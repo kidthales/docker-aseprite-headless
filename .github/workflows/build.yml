@@ -13,6 +13,11 @@ on:
         type: string
         description: Usually one of 'Debug', 'Release', or 'RelWithDebInfo'.
         default: Release
+      force-rebuild:
+        required: false
+        type: boolean
+        description: Force rebuild even if image tag exists in GHCR.
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.inputs.aseprite-git-ref || github.ref_name }}
@@ -24,6 +29,7 @@ jobs:
     with:
       aseprite-git-ref: ${{ github.event.inputs.aseprite-git-ref }}
       aseprite-build-type: ${{ github.event.inputs.aseprite-build-type }}
+      force-rebuild: ${{ inputs.force-rebuild || false }}
     secrets:
       ghcr-token: ${{ secrets.GITHUB_TOKEN }}
       dispatch-pat: ${{ secrets.DISPATCH_PAT || secrets.CR_PAT || secrets.GITHUB_TOKEN }}
