@@ -3,7 +3,7 @@
 FROM builder-upstream AS builder
 
 # Install dependencies.
-RUN apt-get update && apt-get upgrade -y && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
 	clang \
 	cmake \
 	curl \
@@ -18,7 +18,10 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 	libxi-dev \
 	libxrandr-dev \
 	ninja-build \
-	unzip
+	python-is-python3 \
+	python3 \
+	unzip \
+	&& rm -rf /var/lib/apt/lists/*
 
 ARG aseprite_git_ref=main
 ARG aseprite_build_type=Release
@@ -50,12 +53,12 @@ RUN ln -s /opt/aseprite/bin/aseprite /usr/local/bin/aseprite && ln -s /opt/asepr
 
 # Install dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-	libc++1-17t64 \
+	libc++1-18 \
 	libfontconfig1 \
 	libgl1 \
 	libldap2 \
 	libsm6 \
-	libssl3 \
+	libssl3t64 \
 	libxcursor1 \
 	libxrandr2 \
 	&& rm -rf /var/lib/apt/lists/*
