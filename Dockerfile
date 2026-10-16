@@ -52,17 +52,14 @@ COPY --from=builder /opt/aseprite/build/bin /opt/aseprite/bin
 # Ensure binary is found in $PATH.
 RUN ln -s /opt/aseprite/bin/aseprite /usr/local/bin/aseprite && ln -s /opt/aseprite/bin/aseprite /usr/local/bin/ase
 
-# Install dependencies.
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+# Install stripped runtime dependencies (purged unlinked libfontconfig1, libgl1, libldap2, libsm6, libssl3).
+RUN apt-get update && apt-get install -y --no-install-recommends \
 	libc++1-18 \
-	libfontconfig1 \
-	libgl1 \
-	libldap2 \
-	libsm6 \
-	libssl3t64 \
+	libx11-6 \
 	libxcursor1 \
+	libxext6 \
 	libxrandr2 \
-	&& rm -rf /var/lib/apt/lists/*
+	&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 COPY --link --chmod=755 entrypoint.sh /docker-aseprite-entrypoint
 
