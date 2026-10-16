@@ -13,6 +13,11 @@ on:
         type: string
         description: Usually one of 'Debug', 'Release', or 'RelWithDebInfo'.
         default: Release
+      force-rebuild:
+        required: false
+        type: boolean
+        description: Force rebuild even if image tag exists in GHCR.
+        default: false
 
     secrets:
       ghcr-token:
@@ -33,7 +38,32 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.ghcr-token }}
+
+      - name: Check if image tag already exists in GHCR
+        id: check-tag
+        run: |
+          IMAGE_TAG="${{ inputs.aseprite-git-ref }}-headless"
+          IMAGE_URI="ghcr.io/${{ github.repository_owner }}/aseprite:${IMAGE_TAG}"
+          echo "Inspecting registry for ${IMAGE_URI}..."
+          
+          if [ "${{ inputs.force-rebuild }}" = "true" ]; then
+            echo "force-rebuild is enabled. Proceeding with build."
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.aseprite-git-ref }}" = "main" ]; then
+            echo "Git ref is 'main' (nightly). Proceeding with build."
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+          else
+            if docker manifest inspect "${IMAGE_URI}" > /dev/null 2>&1; then
+              echo "Tag ${IMAGE_TAG} already exists in GHCR. Skipping compilation to conserve runner quota."
+              echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Tag ${IMAGE_TAG} does not exist in GHCR. Proceeding with compilation."
+              echo "skip_build=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
       - uses: docker/bake-action@v7
+        if: steps.check-tag.outputs.skip_build != 'true'
         with:
           pull: true
           push: true
