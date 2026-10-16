@@ -52,9 +52,10 @@ COPY --from=builder /opt/aseprite/build/bin /opt/aseprite/bin
 # Ensure binary is found in $PATH.
 RUN ln -s /opt/aseprite/bin/aseprite /usr/local/bin/aseprite && ln -s /opt/aseprite/bin/aseprite /usr/local/bin/ase
 
-# Install stripped runtime dependencies (purged unlinked libfontconfig1, libgl1, libldap2, libsm6, libssl3).
+# Install runtime dependencies (including libfontconfig1 required for font/brotli rendering).
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	libc++1-18 \
+	libfontconfig1 \
 	libx11-6 \
 	libxcursor1 \
 	libxext6 \
