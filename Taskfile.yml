@@ -1,0 +1,55 @@
+version: '3'
+
+vars:
+  DOCKER_BAKE: touch .env && docker buildx bake -f .env -f docker-bake.hcl
+
+tasks:
+  default:
+    desc: Display available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  build:
+    desc: 'Build Aseprite headless image (pass extra bake args after --; e.g. task build -- --no-cache)'
+    cmds:
+      - '{{.DOCKER_BAKE}} {{.CLI_ARGS}}'
+
+  test:
+    desc: Run smoke tests against built local image
+    cmds:
+      - docker run --rm aseprite:main-headless --help || true
+
+  lint:
+    desc: Run all static analysis checks (BuildKit check, Hadolint, Actionlint, EditorConfig, ShellCheck)
+    deps: [lint:bake, lint:dockerfile, lint:shell, lint:actions, lint:editorconfig]
+
+  lint:bake:
+    desc: Validate docker-bake.hcl and Dockerfile via BuildKit check
+    cmds:
+      - '{{.DOCKER_BAKE}} --call=check'
+
+  lint:dockerfile:
+    desc: Lint Dockerfile with Hadolint
+    cmds:
+      - docker run --rm -i -v "{{.ROOT_DIR}}/.hadolint.yaml:/.hadolint.yaml:ro" hadolint/hadolint < Dockerfile
+
+  lint:shell:
+    desc: Lint entrypoint shell script with ShellCheck
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work koalaman/shellcheck:stable entrypoint.sh
+
+  lint:actions:
+    desc: Lint GitHub Actions workflows with Actionlint
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}:/repo:ro" -w /repo rhysd/actionlint -color
+
+  lint:editorconfig:
+    desc: Verify file formatting and line endings against .editorconfig
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}:/check:ro" mstruebing/editorconfig-checker
+
+  print:
+    desc: Print resolved docker-bake.hcl configuration
+    cmds:
+      - '{{.DOCKER_BAKE}} --print'
