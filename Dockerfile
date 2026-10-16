@@ -4,6 +4,7 @@ FROM builder-upstream AS builder
 
 # Install dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+	ca-certificates \
 	clang \
 	cmake \
 	curl \
