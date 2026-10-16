@@ -1,3 +1,2 @@
 ignored:
-  - DL3006 # BuildKit named contexts (builder-upstream, app-upstream) are resolved via docker-bake.hcl
   - DL3008 # Rolling Ubuntu 24.04 security updates supersede fixed apt package versions
