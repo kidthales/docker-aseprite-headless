@@ -3,6 +3,29 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: cron
-      cronjob: '0 8 * * SAT'
+      interval: weekly
+      day: saturday
+      time: '08:00'
       timezone: Canada/Pacific
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: '08:00'
+      timezone: Canada/Pacific
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      docker:
+        patterns:
+          - '*'
