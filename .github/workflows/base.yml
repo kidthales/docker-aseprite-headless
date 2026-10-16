@@ -73,3 +73,13 @@ jobs:
           ASEPRITE_BUILD_TYPE: ${{ inputs.aseprite-build-type }}
           ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
           IMAGES_PREFIX: ghcr.io/${{ github.repository_owner }}/
+
+      - name: Run Trivy Vulnerability Scanner
+        if: steps.check-tag.outputs.skip_build != 'true'
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/aseprite:${{ inputs.aseprite-git-ref }}-headless
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: false
+          severity: 'CRITICAL'

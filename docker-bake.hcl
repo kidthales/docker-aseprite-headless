@@ -1,7 +1,7 @@
-variable "APP_UPSTREAM" { default = "docker-image://debian:trixie-slim" }
+variable "APP_UPSTREAM" { default = "docker-image://ubuntu:24.04" }
 variable "ASEPRITE_BUILD_TYPE" { default = "Release" }
 variable "ASEPRITE_GIT_REF" { default = "main" }
-variable "BUILDER_UPSTREAM" { default = "docker-image://python:3.12.14-trixie" }
+variable "BUILDER_UPSTREAM" { default = "docker-image://ubuntu:24.04" }
 variable "IMAGES_PREFIX" { default = "" }
 
 target "aseprite-headless" {
