@@ -23,24 +23,17 @@ on:
       ghcr-token:
         required: true
         description: Access token to the GitHub Container Registry associated with the repository owner.
+      dispatch-pat:
+        required: false
+        description: Access token to trigger repository_dispatch on downstream repositories.
 
 jobs:
-  build-and-push:
-    name: Build Aseprite ${{ inputs.aseprite-git-ref }} (${{ inputs.aseprite-build-type }}) and Push to ghcr.io/${{ github.repository_owner }}
-
+  check-tag:
+    name: Check Image Tag Existence
     runs-on: ubuntu-latest
-
+    outputs:
+      skip_build: ${{ steps.check-tag.outputs.skip_build }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ghcr-token }}
-
       - name: Check if image tag already exists in GHCR
         id: check-tag
         run: |
@@ -64,22 +57,67 @@ jobs:
             fi
           fi
 
+  build-and-push:
+    name: Build ${{ matrix.platform }} on ${{ matrix.runner }}
+    needs: check-tag
+    if: needs.check-tag.outputs.skip_build != 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ghcr-token }}
+
       - uses: docker/bake-action@v7
-        if: steps.check-tag.outputs.skip_build != 'true'
         with:
           pull: true
           push: true
           source: .
           set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
+            *.platform=${{ matrix.platform }}
+            *.cache-from=type=gha,scope=${{ matrix.arch }}
+            *.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}
         env:
           ASEPRITE_BUILD_TYPE: ${{ inputs.aseprite-build-type }}
           ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
           IMAGES_PREFIX: ghcr.io/${{ github.repository_owner }}/
+          IMAGE_TAG: ${{ inputs.aseprite-git-ref }}-headless-${{ matrix.arch }}
+
+  merge-manifests:
+    name: Merge Manifests and Publish Multi-Arch Image
+    needs: [check-tag, build-and-push]
+    if: needs.check-tag.outputs.skip_build != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ghcr-token }}
+
+      - name: Create and Push Multi-Arch Manifest
+        run: |
+          TAG="${{ inputs.aseprite-git-ref }}-headless"
+          PREFIX="ghcr.io/${{ github.repository_owner }}/aseprite:"
+          docker buildx imagetools create -t "${PREFIX}${TAG}" \
+            "${PREFIX}${TAG}-amd64" \
+            "${PREFIX}${TAG}-arm64"
 
       - name: Run Trivy Vulnerability Scanner
-        if: steps.check-tag.outputs.skip_build != 'true'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository_owner }}/aseprite:${{ inputs.aseprite-git-ref }}-headless
@@ -87,3 +125,12 @@ jobs:
           exit-code: '1'
           ignore-unfixed: false
           severity: 'CRITICAL'
+
+      - name: Trigger Downstream GDTK Build
+        uses: peter-evans/repository-dispatch@v3
+        continue-on-error: true
+        with:
+          token: ${{ secrets.dispatch-pat || secrets.ghcr-token }}
+          repository: ${{ github.repository_owner }}/docker-game-development-toolkit
+          event-type: aseprite-published
+          client-payload: '{"aseprite_git_ref": "${{ inputs.aseprite-git-ref }}"}'

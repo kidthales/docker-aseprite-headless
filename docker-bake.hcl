@@ -3,6 +3,7 @@ variable "ASEPRITE_BUILD_TYPE" { default = "Release" }
 variable "ASEPRITE_GIT_REF" { default = "main" }
 variable "BUILDER_UPSTREAM" { default = "docker-image://ubuntu:24.04" }
 variable "IMAGES_PREFIX" { default = "" }
+variable "IMAGE_TAG" { default = "" }
 variable "PLATFORMS" { default = ["linux/amd64", "linux/arm64"] }
 
 target "aseprite-headless" {
@@ -16,7 +17,7 @@ target "aseprite-headless" {
     app-upstream = "${APP_UPSTREAM}"
   }
   target = "app"
-  tags = ["${IMAGES_PREFIX}aseprite:${ASEPRITE_GIT_REF}-headless"]
+  tags = [IMAGE_TAG != "" ? "${IMAGES_PREFIX}aseprite:${IMAGE_TAG}" : "${IMAGES_PREFIX}aseprite:${ASEPRITE_GIT_REF}-headless"]
 }
 
 group "default" {
