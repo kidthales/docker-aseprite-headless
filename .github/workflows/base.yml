@@ -24,6 +24,10 @@ on:
         required: true
         description: Access token to the GitHub Container Registry associated with the repository owner.
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   check-tag:
     name: Check Image Tag Existence
