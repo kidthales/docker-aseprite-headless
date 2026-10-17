@@ -12,6 +12,9 @@ on:
     # UTC: Daily at 16:20
     - cron: 20 16 * * *
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
