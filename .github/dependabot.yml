@@ -29,3 +29,10 @@ updates:
       docker:
         patterns:
           - '*'
+    ignore:
+      # Pin Ubuntu to 26.04 LTS; block interim .10 (minor) and uncoordinated major bumps.
+      - dependency-name: 'ubuntu'
+        update-types:
+          - 'version-update:semver-major'
+          - 'version-update:semver-minor'
+
