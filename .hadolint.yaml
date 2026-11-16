@@ -1,2 +1,2 @@
 ignored:
-  - DL3008 # Rolling Ubuntu 24.04 security updates supersede fixed apt package versions
+  - DL3008 # Rolling Ubuntu 26.04 security updates supersede fixed apt package versions

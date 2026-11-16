@@ -18,7 +18,7 @@ tasks:
   test:
     desc: Run smoke tests against built local image
     cmds:
-      - docker run --rm aseprite:main-headless --help || true
+      - docker run --rm aseprite:main-headless --version
 
   lint:
     desc: Run all static analysis checks (BuildKit check, Hadolint, Actionlint, EditorConfig, ShellCheck)
