@@ -305,7 +305,23 @@ try {
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on dirty file content mutation"
     & $RealGit -C $SandboxRepo checkout -- tracked.txt
 
-    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (12/12 cases)"
+    # Case 13 (Negative): task test:unit mutating a .gitignored file (outside .ci-local/) fails Gate 3
+    $ignoredEnvFile = Join-Path $SandboxRepo ".env"
+    Set-Content -LiteralPath $ignoredEnvFile -Value "SEED=1"
+    $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $ignoredEnvFile }
+    Assert-True ($res.ExitCode -ne 0) "Expected mutation of .gitignored file (.env) to fail Gate 3"
+    Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on ignored file mutation"
+    Remove-Item -LiteralPath $ignoredEnvFile -Force
+
+    # Case 14 (Boundary): task test:unit writing inside .ci-local/ does not fail Gate 3
+    $ciLocalDir = Join-Path $SandboxRepo ".ci-local"
+    New-Item -ItemType Directory -Path $ciLocalDir -Force | Out-Null
+    $ciLocalNote = Join-Path $ciLocalDir "note.md"
+    $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $ciLocalNote }
+    Assert-True ($res.ExitCode -eq 0) "Expected .ci-local/ writes to remain exempt from Gate 3 fingerprint, got $($res.ExitCode): $($res.Output)"
+    Remove-Item -LiteralPath $ciLocalDir -Recurse -Force
+
+    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (14/14 cases)"
 } finally {
     if (Test-Path -LiteralPath $TempRoot) {
         Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue

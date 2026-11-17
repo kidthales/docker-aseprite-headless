@@ -27,6 +27,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: write
 
 jobs:
   check-tag:
@@ -92,6 +93,10 @@ jobs:
       - uses: actions/checkout@v7
       - id: buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - name: Cache ccache (${{ matrix.arch }})
         if: inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -127,8 +132,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ghcr-token }}
 
-      - name: Bake and push (main cache write)
-        if: inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main'
+      - name: Bake and push
         uses: docker/bake-action@v7
         with:
           pull: true
@@ -137,23 +141,7 @@ jobs:
           set: |
             *.platform=${{ matrix.platform }}
             *.cache-from=type=gha,scope=${{ matrix.arch }}
-            *.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}
-        env:
-          ASEPRITE_BUILD_TYPE: ${{ inputs.aseprite-build-type }}
-          ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
-          IMAGES_PREFIX: ghcr.io/${{ github.repository_owner }}/
-          IMAGE_TAG: ${{ inputs.aseprite-git-ref }}-headless-${{ matrix.arch }}
-
-      - name: Bake and push (read-only cache)
-        if: inputs.aseprite-git-ref != 'main' || github.ref != 'refs/heads/main'
-        uses: docker/bake-action@v7
-        with:
-          pull: true
-          push: true
-          source: .
-          set: |
-            *.platform=${{ matrix.platform }}
-            *.cache-from=type=gha,scope=${{ matrix.arch }}
+            ${{ inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main' && format('*.cache-to=type=gha,mode=max,scope={0}', matrix.arch) || '' }}
         env:
           ASEPRITE_BUILD_TYPE: ${{ inputs.aseprite-build-type }}
           ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
@@ -192,3 +180,25 @@ jobs:
           ignore-unfixed: false
           trivyignores: '.trivyignore'
           severity: 'CRITICAL'
+
+  prune-ccache:
+    name: Prune Older Nightly ccache Entries
+    needs: [check-tag, build-and-push]
+    if: always() && needs.check-tag.outputs.skip_build != 'true' && inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep newest main ccache entry per arch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for arch in amd64 arm64; do
+            prefix="ccache-${arch}-main-"
+            ids=$(gh api --paginate --slurp \
+              "/repos/${REPO}/actions/caches?ref=refs/heads/main&key=${prefix}&sort=created_at&direction=desc&per_page=100" \
+              | jq -r '[.[].actions_caches[]] | sort_by(.created_at) | reverse | .[1:][].id')
+            for id in $ids; do
+              echo "Pruning older ccache entry ${id} (${prefix})..."
+              gh api -X DELETE "/repos/${REPO}/actions/caches/${id}" || true
+            done
+          done

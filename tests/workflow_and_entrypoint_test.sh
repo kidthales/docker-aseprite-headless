@@ -211,9 +211,14 @@ if ! grep -Eq 'CCACHE_MAXSIZE=[0-9]+[GM]' "$DOCKERFILE"; then
 	exit 1
 fi
 
-# Negative: third-party Trivy, cache, and buildkit-cache-dance actions must be SHA-pinned (never mutable @vX tags)
+if ! grep -Fq 'ccache -z' "$DOCKERFILE" || ! grep -Fq 'ccache -s' "$DOCKERFILE"; then
+	printf 'FAIL: Dockerfile must reset and report ccache stats to monitor hit rate\n' >&2
+	exit 1
+fi
+
+# Negative: third-party Trivy, cache, buildkit-cache-dance, and setup-task actions must be SHA-pinned (never mutable @vX tags)
 for wf in "$LINT_YML" "$BASE_YML"; do
-	if grep -Eq 'uses:[[:space:]]*(aquasecurity/trivy-action|actions/cache(/restore|/save)?|reproducible-containers/buildkit-cache-dance)@v' "$wf"; then
+	if grep -Eq 'uses:[[:space:]]*(aquasecurity/trivy-action|actions/cache(/restore|/save)?|reproducible-containers/buildkit-cache-dance|arduino/setup-task)@v' "$wf"; then
 		printf 'FAIL: %s must pin third-party actions to commit SHAs, not mutable tags\n' "$wf" >&2
 		exit 1
 	fi
@@ -224,9 +229,19 @@ if ! grep -Eq 'uses:[[:space:]]*aquasecurity/trivy-action@[0-9a-f]{40}' "$LINT_Y
 	exit 1
 fi
 
+if ! grep -Eq 'uses:[[:space:]]*arduino/setup-task@[0-9a-f]{40}' "$LINT_YML"; then
+	printf 'FAIL: lint.yml must pin setup-task to a 40-char commit SHA\n' >&2
+	exit 1
+fi
+
 # shellcheck disable=SC2016
 if ! grep -Fq '*.tags=${{ env.IMAGE_REF }}' "$LINT_YML" || ! grep -Fq 'image-ref: ${{ env.IMAGE_REF }}' "$LINT_YML"; then
 	printf 'FAIL: lint.yml must align bake *.tags and trivy image-ref via env.IMAGE_REF\n' >&2
+	exit 1
+fi
+
+if ! grep -Fq 'mirrors = ["mirror.gcr.io"]' "$LINT_YML" || ! grep -Fq 'mirrors = ["mirror.gcr.io"]' "$BASE_YML"; then
+	printf 'FAIL: lint.yml and base.yml must configure mirror.gcr.io registry mirror for docker.io\n' >&2
 	exit 1
 fi
 
@@ -268,15 +283,25 @@ if ! grep -Fq 'task test:smoke' "$LINT_YML"; then
 	exit 1
 fi
 
+if [ "$(grep -c 'uses:[[:space:]]*docker/bake-action@' "$BASE_YML")" -ne 1 ]; then
+	printf 'FAIL: base.yml must use a single docker/bake-action step to prevent config drift\n' >&2
+	exit 1
+fi
+
 # shellcheck disable=SC2016
 if ! grep -Fq "if: inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main'" "$BASE_YML"; then
 	printf 'FAIL: base.yml must gate cache writes strictly to main\n' >&2
 	exit 1
 fi
 
+if ! grep -Fq "inputs.aseprite-git-ref == 'main' && github.ref == 'refs/heads/main' && format('*.cache-to=type=gha,mode=max,scope={0}', matrix.arch)" "$BASE_YML"; then
+	printf 'FAIL: base.yml must configure conditional GHA cache-to export strictly for main builds\n' >&2
+	exit 1
+fi
+
 # shellcheck disable=SC2016
-if ! grep -Fq '*.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}' "$BASE_YML"; then
-	printf 'FAIL: base.yml must configure GHA cache-to export for main builds\n' >&2
+if ! grep -Fq '/actions/caches/${id}' "$BASE_YML" || ! grep -Fq 'prune-ccache:' "$BASE_YML"; then
+	printf 'FAIL: base.yml must prune older nightly ccache entries to protect the 10GB repo cache budget\n' >&2
 	exit 1
 fi
 

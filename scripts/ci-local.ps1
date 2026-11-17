@@ -84,13 +84,21 @@ function Get-WorkingTreeFingerprint {
         throw "git diff --cached exited with $LASTEXITCODE."
     }
 
-    $dirtyPaths = @(& git -c core.quotePath=false ls-files --modified --others --exclude-standard | Sort-Object -Unique)
+    $dirtyPaths = @(& git -c core.quotePath=false ls-files --modified --others --exclude-standard)
     if ($LASTEXITCODE -ne 0) {
         throw "git ls-files --modified --others exited with $LASTEXITCODE."
     }
 
-    $fileHashes = foreach ($relPath in $dirtyPaths) {
-        if ([string]::IsNullOrWhiteSpace($relPath)) { continue }
+    $ignoredPaths = @(
+        & git -c core.quotePath=false ls-files --others --ignored --exclude-standard |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '(^|/)\.ci-local/' }
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files --others --ignored exited with $LASTEXITCODE."
+    }
+
+    $allPaths = @($dirtyPaths + $ignoredPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $fileHashes = foreach ($relPath in $allPaths) {
         if (Test-Path -LiteralPath $relPath -PathType Leaf) {
             $hash = (Get-FileHash -LiteralPath $relPath -Algorithm SHA256).Hash
             "${relPath}:$hash"
