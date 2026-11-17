@@ -5,6 +5,7 @@ FROM ubuntu:26.04 AS builder
 # Install dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
 	ca-certificates \
+	ccache \
 	clang \
 	cmake \
 	curl \
@@ -26,12 +27,14 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 
 ARG aseprite_git_ref=main
 ARG aseprite_build_type=Release
+ARG TARGETARCH
 
-RUN git clone -b "${aseprite_git_ref}" --recursive https://github.com/aseprite/aseprite.git /opt/aseprite
+RUN git clone -b "${aseprite_git_ref}" --depth 1 --recursive --shallow-submodules https://github.com/aseprite/aseprite.git /opt/aseprite
 
 WORKDIR /opt/aseprite/build
 
-RUN export CC=clang && export CXX=clang++ && cmake \
+RUN --mount=type=cache,target=/root/.ccache,id=ccache-${TARGETARCH} \
+	export CC=clang && export CXX=clang++ && cmake \
 	-DCMAKE_BUILD_TYPE="${aseprite_build_type}" \
 	-DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
 	-DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ \
