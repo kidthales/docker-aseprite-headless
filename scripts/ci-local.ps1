@@ -6,7 +6,7 @@
     0. Gate 0: Agent & scratch file leak audit (tracked and untracked)
     1. Gate 1: PowerShell AST parse validation (*.ps1)
     2. Gate 2: Task static analysis suite (task lint: bake, hadolint, shellcheck, actionlint, editorconfig)
-    3. Gate 3: Unit test suite (task test:unit)
+    3. Gate 3: Unit test suite (task test:unit and task test:pwsh)
 .PARAMETER CI
     Enforces strict fail-closed CI mode (auto-enabled when $env:GITHUB_ACTIONS is set):
     verifies required tools upfront and emits GitHub Actions log groups and error annotations.
@@ -73,6 +73,42 @@ function Write-CiGateSummary {
     }
 }
 
+function Get-WorkingTreeFingerprint {
+    $statusLines = @(& git -c core.quotePath=false status --porcelain=v1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git status --porcelain=v1 exited with $LASTEXITCODE."
+    }
+
+    $stagedDiff = (& git diff --cached --no-ext-diff --binary | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git diff --cached exited with $LASTEXITCODE."
+    }
+
+    $dirtyPaths = @(& git -c core.quotePath=false ls-files --modified --others --exclude-standard | Sort-Object -Unique)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files --modified --others exited with $LASTEXITCODE."
+    }
+
+    $fileHashes = foreach ($relPath in $dirtyPaths) {
+        if ([string]::IsNullOrWhiteSpace($relPath)) { continue }
+        if (Test-Path -LiteralPath $relPath -PathType Leaf) {
+            $hash = (Get-FileHash -LiteralPath $relPath -Algorithm SHA256).Hash
+            "${relPath}:$hash"
+        } else {
+            "${relPath}:MISSING"
+        }
+    }
+
+    return (@(
+        "STATUS:"
+        ($statusLines -join "`n")
+        "STAGED:"
+        $stagedDiff
+        "FILES:"
+        ($fileHashes -join "`n")
+    ) -join "`n")
+}
+
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " docker-aseprite-headless Local CI Pipeline$(if ($IsCI) { ' [-CI Mode]' } else { '' })" -ForegroundColor Cyan
 Write-Host " Root: $RootDir" -ForegroundColor Gray
@@ -92,6 +128,7 @@ try {
     $requiredTools = @(
         @{ Name = "git"; Hint = "Install Git and ensure 'git' is on PATH." },
         @{ Name = "task"; Hint = "Install go-task (Taskfile) and ensure 'task' is on PATH." },
+        # Required by containerized 'task lint' and 'task test:unit' sub-tasks.
         @{ Name = "docker"; Hint = "Install Docker Desktop / Engine and ensure 'docker' is on PATH." }
     )
     foreach ($tool in $requiredTools) {
@@ -157,18 +194,27 @@ try {
     $GateResults["gate1_pwsh_ast"] = "fail"
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
-        $Ps1Files = @(Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|\.ci-local)[\\/]' })
+        $Ps1RelPaths = @(& git -c core.quotePath=false ls-files --cached --others --exclude-standard -- "*.ps1" | Sort-Object -Unique)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Gate 1 Failed: git ls-files for *.ps1 exited with $LASTEXITCODE."
+        }
+        $Ps1Files = @(
+            $Ps1RelPaths |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '^\.ci-local/' } |
+                ForEach-Object { Join-Path $RootDir $_ } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        )
         if ($Ps1Files.Count -eq 0) {
             throw "Gate 1 Failed: Expected at least one PowerShell script (*.ps1) under $RootDir."
         }
 
         $ParseErrors = 0
-        foreach ($ps in $Ps1Files) {
+        foreach ($psPath in $Ps1Files) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($ps.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile($psPath, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
-                Write-Fail "Parse error in $($ps.FullName): $($errors | Out-String)"
+                Write-Fail "Parse error in ${psPath}: $($errors | Out-String)"
                 $ParseErrors++
             }
         }
@@ -202,16 +248,13 @@ try {
     }
 
     # -------------------------------------------------------------
-    # Gate 3: Unit Test Suite (task test:unit)
+    # Gate 3: Unit Test Suite (task test:unit & task test:pwsh)
     # -------------------------------------------------------------
-    Enter-CiGate 3 $MaxGate "Running unit test suite (task test:unit)..."
+    Enter-CiGate 3 $MaxGate "Running unit test suite (task test:unit & task test:pwsh)..."
     $GateResults["gate3_unit_tests"] = "fail"
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
-        $PreTestStatus = (& git status --porcelain | Out-String)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Gate 3 Failed: pre-test git status exited with $LASTEXITCODE."
-        }
+        $PreTestFingerprint = Get-WorkingTreeFingerprint
 
         & task test:unit
         if ($LASTEXITCODE -ne 0) {
@@ -219,18 +262,21 @@ try {
             throw "Gate 3 Failed: task test:unit failed."
         }
 
-        $PostTestStatus = (& git status --porcelain | Out-String)
+        & task test:pwsh
         if ($LASTEXITCODE -ne 0) {
-            throw "Gate 3 Failed: post-test git status exited with $LASTEXITCODE."
+            Write-Fail "task test:pwsh failed with exit code $LASTEXITCODE."
+            throw "Gate 3 Failed: task test:pwsh failed."
         }
-        if ($PostTestStatus -ne $PreTestStatus) {
-            Write-Fail "Working tree was mutated by 'task test:unit'. Tests must remain side-effect-free."
+
+        $PostTestFingerprint = Get-WorkingTreeFingerprint
+        if ($PostTestFingerprint -ne $PreTestFingerprint) {
+            Write-Fail "Working tree was mutated by unit tests. Tests must remain side-effect-free."
             & git status --porcelain
             throw "Gate 3 Failed: Unit tests produced working tree side effects."
         }
 
         $GateResults["gate3_unit_tests"] = "pass"
-        Write-Pass "task test:unit passed with clean working tree." $StepTimer
+        Write-Pass "Unit test suite passed with clean working tree." $StepTimer
     } finally {
         Exit-CiGate
     }

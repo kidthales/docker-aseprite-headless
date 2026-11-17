@@ -99,4 +99,56 @@ if [ "$rc" -eq 0 ]; then
 	exit 1
 fi
 
-printf 'PASS: workflow retention regex and entrypoint tests passed\n'
+# Dockerfile & CI workflow invariant checks (positive and negative assertions)
+DOCKERFILE="$REPO_ROOT/Dockerfile"
+LINT_YML="$REPO_ROOT/.github/workflows/lint.yml"
+BASE_YML="$REPO_ROOT/.github/workflows/base.yml"
+
+# shellcheck disable=SC2016
+if ! grep -Fq 'git -C /opt/aseprite fetch --depth 1 origin "${aseprite_git_ref}"' "$DOCKERFILE"; then
+	printf 'FAIL: Dockerfile must include commit-SHA git fetch fallback\n' >&2
+	exit 1
+fi
+
+if ! grep -Fq 'ENV HOME=/tmp' "$DOCKERFILE"; then
+	printf 'FAIL: Dockerfile must set ENV HOME=/tmp for non-root --user runs\n' >&2
+	exit 1
+fi
+
+# shellcheck disable=SC2016
+if ! grep -Fq -- '--mount=type=cache,target=/root/.ccache,id=ccache-${TARGETARCH}' "$DOCKERFILE"; then
+	printf 'FAIL: Dockerfile must mount per-arch BuildKit ccache\n' >&2
+	exit 1
+fi
+
+# Negative: third-party Trivy, cache, and buildkit-cache-dance actions must be SHA-pinned (never mutable @vX tags)
+for wf in "$LINT_YML" "$BASE_YML"; do
+	if grep -Eq 'uses:[[:space:]]*(aquasecurity/trivy-action|actions/cache|reproducible-containers/buildkit-cache-dance)@v' "$wf"; then
+		printf 'FAIL: %s must pin third-party actions to commit SHAs, not mutable tags\n' "$wf" >&2
+		exit 1
+	fi
+done
+
+if ! grep -Eq 'uses:[[:space:]]*aquasecurity/trivy-action@[0-9a-f]{40}' "$LINT_YML"; then
+	printf 'FAIL: lint.yml must pin trivy-action to a 40-char commit SHA\n' >&2
+	exit 1
+fi
+
+# shellcheck disable=SC2016
+if ! grep -Fq '*.tags=${{ env.IMAGE_REF }}' "$LINT_YML" || ! grep -Fq 'image-ref: ${{ env.IMAGE_REF }}' "$LINT_YML"; then
+	printf 'FAIL: lint.yml must align bake *.tags and trivy image-ref via env.IMAGE_REF\n' >&2
+	exit 1
+fi
+
+# shellcheck disable=SC2016
+if ! grep -Fq '*.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}' "$LINT_YML"; then
+	printf 'FAIL: lint.yml must configure GHA cache-to export\n' >&2
+	exit 1
+fi
+
+if ! grep -Fq 'reproducible-containers/buildkit-cache-dance@' "$LINT_YML" || ! grep -Fq 'reproducible-containers/buildkit-cache-dance@' "$BASE_YML"; then
+	printf 'FAIL: lint.yml and base.yml must persist BuildKit ccache mounts via buildkit-cache-dance\n' >&2
+	exit 1
+fi
+
+printf 'PASS: workflow retention regex, entrypoint, Dockerfile, and CI invariant tests passed\n'

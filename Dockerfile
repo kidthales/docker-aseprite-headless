@@ -29,7 +29,14 @@ ARG aseprite_git_ref=main
 ARG aseprite_build_type=Release
 ARG TARGETARCH
 
-RUN git clone -b "${aseprite_git_ref}" --depth 1 --recursive --shallow-submodules https://github.com/aseprite/aseprite.git /opt/aseprite
+RUN if ! git clone -b "${aseprite_git_ref}" --depth 1 --recursive --shallow-submodules https://github.com/aseprite/aseprite.git /opt/aseprite; then \
+		rm -rf /opt/aseprite && \
+		git init /opt/aseprite && \
+		git -C /opt/aseprite remote add origin https://github.com/aseprite/aseprite.git && \
+		git -C /opt/aseprite fetch --depth 1 origin "${aseprite_git_ref}" && \
+		git -C /opt/aseprite checkout FETCH_HEAD && \
+		git -C /opt/aseprite submodule update --init --recursive --depth 1; \
+	fi
 
 WORKDIR /opt/aseprite/build
 
