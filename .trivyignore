@@ -1,0 +1,9 @@
+# Trivy vulnerability waiver policy for docker-aseprite-headless.
+#
+# - PR builds (.github/workflows/lint.yml) enforce severity=CRITICAL with
+#   ignore-unfixed=true so unfixable upstream Ubuntu base-image CVEs do not
+#   block unrelated pull requests while fixable CRITICAL CVEs fail the gate.
+# - Nightly and release builds (.github/workflows/base.yml) enforce
+#   severity=CRITICAL with ignore-unfixed=false.
+# - Any temporary CVE waiver added here MUST include the CVE ID, reason, and
+#   an explicit expiration date (for example: CVE-YYYY-NNNNN exp:2026-12-31).

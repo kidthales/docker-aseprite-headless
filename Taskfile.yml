@@ -2,6 +2,7 @@ version: '3'
 
 vars:
   DOCKER_BAKE: touch .env && docker buildx bake -f .env -f docker-bake.hcl
+  IMAGE_REF: '{{.IMAGE_REF | default "aseprite:main-headless"}}'
 
 tasks:
   default:
@@ -19,12 +20,23 @@ tasks:
     desc: Run unit and container smoke tests against built local image
     cmds:
       - task: test:unit
-      - docker run --rm aseprite:main-headless --version
+      - task: test:smoke
+
+  test:smoke:
+    desc: Run container smoke test against built local image
+    cmds:
+      - docker run --rm {{.IMAGE_REF}} --version
 
   test:unit:
-    desc: Run unit tests for workflow retention rules and entrypoint behavior
+    desc: Run unit tests for workflow retention rules, entrypoint behavior, and Dockerfile/CI invariants
     cmds:
-      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work ubuntu:26.04 sh tests/workflow_and_entrypoint_test.sh
+      - printf 'FROM ubuntu:26.04\nCOPY --from=ghcr.io/jqlang/jq:1.7.1 /jq /usr/local/bin/jq\n' | docker build -q -t docker-aseprite-headless-test -
+      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work docker-aseprite-headless-test sh tests/workflow_and_entrypoint_test.sh
+
+  test:pwsh:
+    desc: Run PowerShell local CI runner unit and negative-path tests
+    cmds:
+      - pwsh -NoProfile -File tests/ci_local_test.ps1
 
   lint:
     desc: Run all static analysis checks (BuildKit check, Hadolint, Actionlint, EditorConfig, ShellCheck)
