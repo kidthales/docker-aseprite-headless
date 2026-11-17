@@ -1,6 +1,6 @@
 #syntax=docker/dockerfile:1
 
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:26.04 AS builder
 
 # Install dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -42,7 +42,7 @@ RUN export CC=clang && export CXX=clang++ && cmake \
 	.. \
 	&& ninja aseprite
 
-FROM ubuntu:24.04 AS app
+FROM ubuntu:26.04 AS app
 
 LABEL org.opencontainers.image.source=https://github.com/kidthales/docker-aseprite-headless
 LABEL org.opencontainers.image.description="Provides an Aseprite binary suitable for CLI use cases such as in build scripts or automated workflows like GitHub Actions."
@@ -54,8 +54,8 @@ COPY --from=builder /opt/aseprite/build/bin /opt/aseprite/bin
 RUN ln -s /opt/aseprite/bin/aseprite /usr/local/bin/aseprite && ln -s /opt/aseprite/bin/aseprite /usr/local/bin/ase
 
 # Install runtime dependencies (including libfontconfig1 required for font/brotli rendering).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-	libc++1-18 \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+	libc++1 \
 	libfontconfig1 \
 	libx11-6 \
 	libxcursor1 \

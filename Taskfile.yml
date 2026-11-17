@@ -16,9 +16,15 @@ tasks:
       - '{{.DOCKER_BAKE}} {{.CLI_ARGS}}'
 
   test:
-    desc: Run smoke tests against built local image
+    desc: Run unit and container smoke tests against built local image
     cmds:
-      - docker run --rm aseprite:main-headless --help || true
+      - task: test:unit
+      - docker run --rm aseprite:main-headless --version
+
+  test:unit:
+    desc: Run unit tests for workflow retention rules and entrypoint behavior
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work ubuntu:26.04 sh tests/workflow_and_entrypoint_test.sh
 
   lint:
     desc: Run all static analysis checks (BuildKit check, Hadolint, Actionlint, EditorConfig, ShellCheck)
@@ -35,9 +41,9 @@ tasks:
       - docker run --rm -i -v "{{.ROOT_DIR}}/.hadolint.yaml:/.hadolint.yaml:ro" hadolint/hadolint < Dockerfile
 
   lint:shell:
-    desc: Lint entrypoint shell script with ShellCheck
+    desc: Lint shell scripts with ShellCheck
     cmds:
-      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work koalaman/shellcheck:stable entrypoint.sh
+      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work koalaman/shellcheck:stable entrypoint.sh tests/workflow_and_entrypoint_test.sh
 
   lint:actions:
     desc: Lint GitHub Actions workflows with Actionlint

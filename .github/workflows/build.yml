@@ -21,18 +21,20 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.aseprite-git-ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ inputs.aseprite-git-ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build-and-push:
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/base.yml
     with:
-      aseprite-git-ref: ${{ github.event.inputs.aseprite-git-ref }}
-      aseprite-build-type: ${{ github.event.inputs.aseprite-build-type }}
+      aseprite-git-ref: ${{ inputs.aseprite-git-ref }}
+      aseprite-build-type: ${{ inputs.aseprite-build-type }}
       force-rebuild: ${{ inputs.force-rebuild || false }}
     secrets:
       ghcr-token: ${{ secrets.GITHUB_TOKEN }}

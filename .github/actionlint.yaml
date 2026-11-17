@@ -1,0 +1,4 @@
+# Temporary allowlist for GitHub's ubuntu-26.04-arm runner until upstream rhysd/actionlint (>v1.7.12) adds it natively.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04-arm
