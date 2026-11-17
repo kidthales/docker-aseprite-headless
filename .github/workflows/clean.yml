@@ -35,6 +35,6 @@ jobs:
           older-than: 30 days
           delete-tags: '.*'
           use-regex: true
-          exclude-tags: '^(main|latest|v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?-headless.*)$'
+          exclude-tags: '^(main|latest|main-headless.*|v[0-9]+\.[0-9]+\.[0-9]+-headless.*|v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+-headless.*)$'
           dry-run: ${{ inputs.dry-run || false }}
 

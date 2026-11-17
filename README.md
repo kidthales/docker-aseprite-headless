@@ -29,7 +29,7 @@ FROM ubuntu:26.04
 COPY --from=ghcr.io/kidthales/aseprite:v1.3.18.6-headless /opt/aseprite/bin/aseprite /usr/local/bin/aseprite
 
 # 2. Install minimal runtime dependencies (including libfontconfig1 for brotli/font rendering)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     libc++1 \
     libfontconfig1 \
     libx11-6 \

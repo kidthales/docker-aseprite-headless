@@ -42,15 +42,24 @@ jobs:
           password: ${{ secrets.ghcr-token }}
       - name: Check if image tag already exists in GHCR
         id: check-tag
+        env:
+          ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
+          FORCE_REBUILD: ${{ inputs.force-rebuild }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
-          IMAGE_TAG="${{ inputs.aseprite-git-ref }}-headless"
-          IMAGE_URI="ghcr.io/${{ github.repository_owner }}/aseprite:${IMAGE_TAG}"
+          if ! [[ "$ASEPRITE_GIT_REF" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Error: aseprite-git-ref '$ASEPRITE_GIT_REF' contains invalid OCI tag characters (allowed: A-Za-z0-9._-)." >&2
+            exit 1
+          fi
+
+          IMAGE_TAG="${ASEPRITE_GIT_REF}-headless"
+          IMAGE_URI="ghcr.io/${REPOSITORY_OWNER}/aseprite:${IMAGE_TAG}"
           echo "Inspecting registry for ${IMAGE_URI}..."
-          
-          if [ "${{ inputs.force-rebuild }}" = "true" ]; then
+
+          if [ "$FORCE_REBUILD" = "true" ]; then
             echo "force-rebuild is enabled. Proceeding with build."
             echo "skip_build=false" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.aseprite-git-ref }}" = "main" ]; then
+          elif [ "$ASEPRITE_GIT_REF" = "main" ]; then
             echo "Git ref is 'main' (nightly). Proceeding with build."
             echo "skip_build=false" >> "$GITHUB_OUTPUT"
           else
@@ -116,9 +125,12 @@ jobs:
           password: ${{ secrets.ghcr-token }}
 
       - name: Create and Push Multi-Arch Manifest
+        env:
+          ASEPRITE_GIT_REF: ${{ inputs.aseprite-git-ref }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
-          TAG="${{ inputs.aseprite-git-ref }}-headless"
-          PREFIX="ghcr.io/${{ github.repository_owner }}/aseprite:"
+          TAG="${ASEPRITE_GIT_REF}-headless"
+          PREFIX="ghcr.io/${REPOSITORY_OWNER}/aseprite:"
           docker buildx imagetools create -t "${PREFIX}${TAG}" \
             "${PREFIX}${TAG}-amd64" \
             "${PREFIX}${TAG}-arm64"
