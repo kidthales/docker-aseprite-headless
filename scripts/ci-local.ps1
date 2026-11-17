@@ -98,24 +98,31 @@ function Get-WorkingTreeFingerprint {
         throw "git ls-files --others --ignored exited with $LASTEXITCODE."
     }
 
-    $ignoredPaths = @(
+    $candidateIgnored = @(
         $rawIgnoredPaths |
             Where-Object {
                 -not [string]::IsNullOrWhiteSpace($_) -and
-                $_ -notmatch '(^|/)\.ci-local/' -and
-                ($_ -split '/').Count -le $MaxIgnoredDepth
-            } |
-            Select-Object -First $MaxIgnoredFiles
+                $_ -notmatch '(^|/)\.ci-local/'
+            }
     )
+    $depthFiltered = @(
+        $candidateIgnored |
+            Where-Object { ($_ -split '/').Count -le $MaxIgnoredDepth }
+    )
+    $skippedByDepth = $candidateIgnored.Count - $depthFiltered.Count
+    $ignoredPaths = @($depthFiltered | Select-Object -First $MaxIgnoredFiles)
+    $skippedByCount = $depthFiltered.Count - $ignoredPaths.Count
 
     $cwd = (Get-Location).ProviderPath
     $allPaths = @($dirtyPaths + $ignoredPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $largeFileCount = 0
     $fileHashes = foreach ($relPath in $allPaths) {
         $fullPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($cwd, $relPath))
         if ([System.IO.File]::Exists($fullPath)) {
             try {
                 $item = [System.IO.FileInfo]::new($fullPath)
                 if ($item.Length -gt $MaxHashBytes) {
+                    $largeFileCount++
                     "${relPath}:LARGE:$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
                 } else {
                     $stream = [System.IO.File]::OpenRead($fullPath)
@@ -137,6 +144,10 @@ function Get-WorkingTreeFingerprint {
         } else {
             "${relPath}:MISSING"
         }
+    }
+
+    if ($skippedByDepth -gt 0 -or $skippedByCount -gt 0 -or $largeFileCount -gt 0) {
+        Write-Host "  -> [INFO] Fingerprint bounds applied: skipped_depth=$skippedByDepth (max_depth=$MaxIgnoredDepth), skipped_count=$skippedByCount (max_files=$MaxIgnoredFiles), size_mtime_only=$largeFileCount (>10MiB)." -ForegroundColor DarkGray
     }
 
     return (@(

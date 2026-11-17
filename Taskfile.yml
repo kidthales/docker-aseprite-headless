@@ -30,7 +30,8 @@ tasks:
   test:unit:
     desc: Run unit tests for workflow retention rules, entrypoint behavior, and Dockerfile/CI invariants
     cmds:
-      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work ubuntu:26.04 sh tests/workflow_and_entrypoint_test.sh
+      - printf 'FROM ubuntu:26.04\nCOPY --from=ghcr.io/jqlang/jq:1.7.1 /jq /usr/local/bin/jq\n' | docker build -q -t docker-aseprite-headless-test -
+      - docker run --rm -v "{{.ROOT_DIR}}:/work:ro" -w /work docker-aseprite-headless-test sh tests/workflow_and_entrypoint_test.sh
 
   test:pwsh:
     desc: Run PowerShell local CI runner unit and negative-path tests

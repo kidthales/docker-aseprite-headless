@@ -157,10 +157,15 @@ exit 98
 EOF
 chmod +x "$TMP_BIN/git"
 
-# Case A: branch/tag clone succeeds on primary path without invoking fallback fetch
+# Case A: branch/tag clone succeeds on primary path with shallow flags and without invoking fallback fetch
 : > "$GIT_LOG"
 rm -rf "$CLONE_TARGET"
 PATH="$TMP_BIN:$PATH" GIT_LOG="$GIT_LOG" CLONE_TARGET="$CLONE_TARGET" aseprite_git_ref="v1.3.18.6" MOCK_CLONE_FAIL=0 sh -ec "$CLONE_SNIPPET"
+expected_clone="clone -b v1.3.18.6 --depth 1 --recursive --shallow-submodules https://github.com/aseprite/aseprite.git $CLONE_TARGET"
+if ! grep -Fq -- "$expected_clone" "$GIT_LOG"; then
+	printf 'FAIL: primary clone missing expected shallow flags: %s\n' "$expected_clone" >&2
+	exit 1
+fi
 if grep -q 'fetch --depth 1 origin' "$GIT_LOG"; then
 	printf 'FAIL: tag clone path should not invoke commit-SHA fallback fetch\n' >&2
 	exit 1
@@ -324,7 +329,12 @@ if ! sed -n '/^  prune-ccache:/,$p' "$BASE_YML" | grep -q 'actions: write'; then
 	exit 1
 fi
 
-# Semantic test of the live prune-ccache step in base.yml with mocked gh and jq
+# Semantic test of the live prune-ccache step in base.yml with mocked gh and real jq
+if ! command -v jq >/dev/null 2>&1; then
+	printf 'FAIL: real jq binary is required for prune-ccache semantic tests\n' >&2
+	exit 1
+fi
+
 PRUNE_SNIPPET=$(awk '
 	/^  prune-ccache:/ { in_job=1 }
 	in_job && /run: \|/ { in_run=1; next }
@@ -362,13 +372,13 @@ if [ "${1:-}" = "api" ] && [ "${2:-}" = "--paginate" ] && [ "${3:-}" = "--slurp"
 	fi
 	case "$url" in
 		*"key=ccache-amd64-main-"*)
-			printf '[{"actions_caches":[{"id":101,"created_at":"2026-11-17T01:00:00Z"},{"id":102,"created_at":"2026-11-16T01:00:00Z"},{"id":103,"created_at":"2026-11-15T01:00:00Z"}]}]\n'
+			printf '[{"actions_caches":[{"id":102,"created_at":"2026-11-16T01:00:00Z"},{"id":103,"created_at":"2026-11-15T01:00:00Z"}]},{"actions_caches":[{"id":101,"created_at":"2026-11-17T01:00:00Z"}]}]\n'
 			;;
 		*"key=ccache-arm64-main-"*)
 			printf '[{"actions_caches":[{"id":201,"created_at":"2026-11-17T01:00:00Z"}]}]\n'
 			;;
 		*)
-			printf '[{"actions_caches":[{"id":301,"key":"buildkit-1","size_in_bytes":3000000000},{"id":302,"key":"buildkit-2","size_in_bytes":2500000000}]}]\n'
+			printf '[{"actions_caches":[{"id":302,"key":"buildkit-blob-1-sha256:aaa","last_accessed_at":"2026-11-17T01:00:00Z","size_in_bytes":1000000000},{"id":301,"key":"index-amd64-1-abc#1","last_accessed_at":"2026-11-17T03:00:00Z","size_in_bytes":3000000000},{"id":304,"key":"cache-trivy-2026-11-17","last_accessed_at":"2026-11-10T01:00:00Z","size_in_bytes":5000000000},{"id":101,"key":"ccache-amd64-main-1","last_accessed_at":"2026-11-10T01:00:00Z","size_in_bytes":2000000000}]},{"actions_caches":[{"id":303,"key":"buildkit-blob-1-sha256:bbb","created_at":"2026-11-17T02:00:00Z","size_in_bytes":2000000000},{"id":305,"key":"buildkit-blob-1-sha256:ccc","last_accessed_at":"2026-11-16T00:00:00Z","size_in_bytes":100}]}]\n'
 			;;
 	esac
 	exit 0
@@ -378,43 +388,23 @@ exit 97
 EOF
 chmod +x "$TMP_BIN/gh"
 
-cat > "$TMP_BIN/jq" <<'EOF'
-#!/bin/sh
-set -eu
-cat > /dev/null
-if [ "${MOCK_JQ_FAIL:-0}" = "1" ]; then
-	exit 1
-fi
-# Distinguish query kind from the most recent gh api list call in GH_LOG
-last_url=$(tail -n 1 "$GH_LOG")
-case "$last_url" in
-	*"key=ccache-amd64-main-"*)
-		printf '102\n103\n'
-		;;
-	*"key=ccache-arm64-main-"*)
-		;;
-	*)
-		printf '302\n'
-		;;
-esac
-EOF
-chmod +x "$TMP_BIN/jq"
-
-# Prune Case A (Positive): deletes older amd64 ccache entries (102, 103) and over-budget GHA entry (302), keeps newest (101, 201)
+# Prune Case A (Positive): real jq keeps newest ccache (101, 201), preserves non-BuildKit caches (304),
+# keeps BuildKit entries within 5 GiB LRU budget (301, 303), and deletes older ccache (102, 103) and over-budget BuildKit entries (302, 305)
 : > "$GH_LOG"
 PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" bash -c "$PRUNE_SNIPPET"
 for expected_del in \
 	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/102" \
 	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/103" \
-	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/302"; do
+	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/302" \
+	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/305"; do
 	if ! grep -Fq -- "$expected_del" "$GH_LOG"; then
 		printf 'FAIL: prune-ccache missing expected delete: %s\n' "$expected_del" >&2
 		exit 1
 	fi
 done
-for kept_id in 101 201 301; do
+for kept_id in 101 201 301 303 304; do
 	if grep -Fq -- "/actions/caches/${kept_id}" "$GH_LOG"; then
-		printf 'FAIL: prune-ccache must not delete newest/in-budget cache id %s\n' "$kept_id" >&2
+		printf 'FAIL: prune-ccache must not delete newest, in-budget, or non-BuildKit cache id %s\n' "$kept_id" >&2
 		exit 1
 	fi
 done
@@ -430,14 +420,26 @@ if [ "$rc" -eq 0 ] || ! printf '%s\n' "$warn_out" | grep -q '::warning::'; then
 	exit 1
 fi
 
-# Prune Case C (Negative): jq failure in pipe fails non-zero (pipefail)
+# Prune Case C (Negative): jq failure emits ::warning::, continues remaining prune loops, and fails non-zero
+TMP_FAIL_JQ_BIN="$TMP_BIN/jq-fail"
+mkdir -p "$TMP_FAIL_JQ_BIN"
+cat > "$TMP_FAIL_JQ_BIN/jq" <<'EOF'
+#!/bin/sh
+cat > /dev/null
+exit 1
+EOF
+chmod +x "$TMP_FAIL_JQ_BIN/jq"
 : > "$GH_LOG"
 set +e
-PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" MOCK_JQ_FAIL=1 bash -c "$PRUNE_SNIPPET" >/dev/null 2>&1
+warn_out=$(PATH="$TMP_FAIL_JQ_BIN:$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" bash -c "$PRUNE_SNIPPET" 2>&1)
 rc=$?
 set -e
-if [ "$rc" -eq 0 ]; then
-	printf 'FAIL: prune-ccache must exit non-zero when jq pipe fails\n' >&2
+if [ "$rc" -eq 0 ] || ! printf '%s\n' "$warn_out" | grep -q '::warning::Failed to parse'; then
+	printf 'FAIL: prune-ccache must emit ::warning:: and exit non-zero when jq fails (rc=%s)\n' "$rc" >&2
+	exit 1
+fi
+if ! grep -Fq 'key=ccache-arm64-main-' "$GH_LOG" || ! grep -Fq 'sort=last_accessed_at' "$GH_LOG"; then
+	printf 'FAIL: prune-ccache must continue remaining loops after a jq parse failure\n' >&2
 	exit 1
 fi
 

@@ -208,7 +208,11 @@ jobs:
               failed=1
               continue
             fi
-            ids=$(printf '%s\n' "$response" | jq -r '[.[].actions_caches[]] | sort_by(.created_at) | reverse | .[1:][].id')
+            if ! ids=$(printf '%s\n' "$response" | jq -r '[.[].actions_caches[]] | sort_by(.created_at) | reverse | .[1:][].id'); then
+              echo "::warning::Failed to parse ccache entries for ${prefix}"
+              failed=1
+              continue
+            fi
             for id in $ids; do
               echo "Pruning older ccache entry ${id} (${prefix})..."
               if ! gh api -X DELETE "/repos/${REPO}/actions/caches/${id}"; then
@@ -218,26 +222,28 @@ jobs:
             done
           done
 
-          # Prune older BuildKit type=gha cache entries on main beyond a 5 GiB LRU budget
+          # Prune older BuildKit type=gha cache entries (index- and buildkit-blob-) on main beyond a 5 GiB LRU budget
           # so combined ccache (<= 4 GiB) + BuildKit caches stay under GitHub's 10 GiB repo cap.
           if ! gha_response=$(gh api --paginate --slurp \
             "/repos/${REPO}/actions/caches?ref=refs/heads/main&sort=last_accessed_at&direction=desc&per_page=100"); then
             echo "::warning::Failed to list BuildKit GHA cache entries for refs/heads/main"
             failed=1
+          elif ! stale_gha_ids=$(printf '%s\n' "$gha_response" | jq -r '
+            [.[].actions_caches[] | select((.key // "") | (startswith("buildkit-blob-") or startswith("index-")))]
+            | sort_by(.last_accessed_at // .created_at) | reverse
+            | reduce .[] as $item (
+                {acc: 0, full: false, drop: []};
+                if .full or ((.acc + ($item.size_in_bytes // 0)) > 5368709120) then
+                  .full = true | .drop += [$item.id]
+                else
+                  .acc += ($item.size_in_bytes // 0)
+                end
+              )
+            | .drop[]
+          '); then
+            echo "::warning::Failed to parse BuildKit GHA cache entries for refs/heads/main"
+            failed=1
           else
-            stale_gha_ids=$(printf '%s\n' "$gha_response" | jq -r '
-              [.[].actions_caches[] | select(.key | startswith("ccache-") | not)]
-              | sort_by(.last_accessed_at // .created_at) | reverse
-              | reduce .[] as $item (
-                  {acc: 0, full: false, drop: []};
-                  if .full or ((.acc + ($item.size_in_bytes // 0)) > 5368709120) then
-                    .full = true | .drop += [$item.id]
-                  else
-                    .acc += ($item.size_in_bytes // 0)
-                  end
-                )
-              | .drop[]
-            ')
             for id in $stale_gha_ids; do
               echo "Pruning older BuildKit GHA cache entry ${id}..."
               if ! gh api -X DELETE "/repos/${REPO}/actions/caches/${id}"; then

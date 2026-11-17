@@ -219,11 +219,17 @@ try {
     Set-Content -LiteralPath (Join-Path $SandboxRepo ".gitignore") -Value ".ci-local/`n.env`n*.lock`n"
     Set-Content -LiteralPath (Join-Path $SandboxRepo "tracked.txt") -Value "initial`n"
 
-    & $RealGit -C $SandboxRepo init -q
-    & $RealGit -C $SandboxRepo config user.email "test@example.com"
-    & $RealGit -C $SandboxRepo config user.name "Test Runner"
-    & $RealGit -C $SandboxRepo add .
-    & $RealGit -C $SandboxRepo commit -q -m "init"
+    function Invoke-SandboxGit {
+        param([string[]]$GitArgs)
+        & $RealGit -c commit.gpgsign=false -c core.hooksPath=/dev/null -C $SandboxRepo @GitArgs
+        Assert-True ($LASTEXITCODE -eq 0) "git $($GitArgs -join ' ') failed with exit code $LASTEXITCODE"
+    }
+
+    Invoke-SandboxGit @("init", "-q")
+    Invoke-SandboxGit @("config", "user.email", "test@example.com")
+    Invoke-SandboxGit @("config", "user.name", "Test Runner")
+    Invoke-SandboxGit @("add", ".")
+    Invoke-SandboxGit @("commit", "-q", "-m", "init")
 
     # Case 1 (Positive): clean tree + valid scripts pass all gates
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll
@@ -250,11 +256,11 @@ try {
     # Case 4 (Negative): force-tracked .ci-local/receipt.json fails Gate 0
     $receipt = Join-Path $SandboxRepo ".ci-local/receipt.json"
     Set-Content -LiteralPath $receipt -Value "{}"
-    & $RealGit -C $SandboxRepo add -f ".ci-local/receipt.json"
+    Invoke-SandboxGit @("add", "-f", ".ci-local/receipt.json")
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll
     Assert-True ($res.ExitCode -ne 0) "Expected tracked .ci-local/receipt.json to fail Gate 0"
     Assert-True ($res.Output -match "\[gate0_agent_leaks: FAIL\]") "Expected gate0 FAIL for tracked receipt"
-    & $RealGit -C $SandboxRepo rm -qf ".ci-local/receipt.json"
+    Invoke-SandboxGit @("rm", "-qf", ".ci-local/receipt.json")
     Remove-Item -LiteralPath (Join-Path $SandboxRepo ".ci-local") -Recurse -Force
 
     # Case 5 (Negative): invalid PowerShell syntax in untracked .ps1 fails Gate 1
@@ -303,13 +309,12 @@ try {
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $trackedFile }
     Assert-True ($res.ExitCode -ne 0) "Expected in-place mutation of already-dirty file to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on dirty file content mutation"
-    & $RealGit -C $SandboxRepo checkout -- tracked.txt
+    Invoke-SandboxGit @("checkout", "--", "tracked.txt")
 
     # Case 13 (Negative): task test:unit mutating a .gitignored file (outside .ci-local/) fails Gate 3
     $ignoredEnvFile = Join-Path $SandboxRepo ".env"
     Set-Content -LiteralPath $ignoredEnvFile -Value "SEED=1"
-    & $RealGit -C $SandboxRepo check-ignore -q ".env"
-    Assert-True ($LASTEXITCODE -eq 0) "Expected .env to be gitignored in sandbox repository"
+    Invoke-SandboxGit @("check-ignore", "-q", ".env")
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $ignoredEnvFile }
     Assert-True ($res.ExitCode -ne 0) "Expected mutation of .gitignored file (.env) to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on ignored file mutation"
@@ -339,7 +344,45 @@ try {
         Remove-Item -LiteralPath $lockedIgnoredFile -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (15/15 cases)"
+    # Case 16 (Boundary): fingerprint truncation bounds and >10MiB file notice
+    $deepDir = Join-Path $SandboxRepo "d1/d2/d3/d4/d5"
+    New-Item -ItemType Directory -Path $deepDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $deepDir "deep.lock") -Value "deep"
+    $largeIgnored = Join-Path $SandboxRepo "000-large.lock"
+    $largeStream = [System.IO.File]::Open(
+        $largeIgnored,
+        [System.IO.FileMode]::Create,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $largeStream.SetLength(10485761)
+    } finally {
+        $largeStream.Dispose()
+    }
+    $manyFiles = New-Object System.Collections.Generic.List[string]
+    for ($i = 1; $i -le 204; $i++) {
+        $p = Join-Path $SandboxRepo ("i{0:D3}.lock" -f $i)
+        Set-Content -LiteralPath $p -Value "x"
+        $manyFiles.Add($p)
+    }
+    try {
+        $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll
+        Assert-True ($res.ExitCode -eq 0) "Expected bounded fingerprint run to pass, got $($res.ExitCode): $($res.Output)"
+        Assert-True ($res.Output -match "Fingerprint bounds applied: skipped_depth=1 \(max_depth=5\), skipped_count=5 \(max_files=200\), size_mtime_only=1 \(>10MiB\)\.") "Expected truncation notice with exact counts, got: $($res.Output)"
+
+        $resMutatedLarge = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $largeIgnored }
+        Assert-True ($resMutatedLarge.ExitCode -ne 0) "Expected size/mtime mutation of >10MiB file to fail Gate 3"
+        Assert-True ($resMutatedLarge.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on >10MiB file mutation"
+    } finally {
+        Remove-Item -LiteralPath (Join-Path $SandboxRepo "d1") -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $largeIgnored -Force -ErrorAction SilentlyContinue
+        foreach ($p in $manyFiles) {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (16/16 cases)"
 } finally {
     if (Test-Path -LiteralPath $TempRoot) {
         Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
