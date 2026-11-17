@@ -92,18 +92,21 @@ touch .env && docker buildx bake -f .env -f docker-bake.hcl --pull --no-cache
 # Run container interactively
 docker run --rm -it aseprite:main-headless --help
 
-# Run CLI batch export on a local sprite
-docker run --rm -it -v "${PWD}:/workspace" aseprite:main-headless --batch --layer "Layer 1" sprite.aseprite --save-as sprite.png
+# Run CLI batch export on a local sprite (mapped to host UID/GID to avoid root-owned output)
+docker run --rm -it --user "$(id -u):$(id -g)" -v "${PWD}:/workspace" aseprite:main-headless --batch --layer "Layer 1" sprite.aseprite --save-as sprite.png
 
 # Build a specific Aseprite release tag
 ASEPRITE_GIT_REF=v1.3.18.6 docker buildx bake -f .env -f docker-bake.hcl --pull --no-cache
 ```
+
+> [!NOTE]
+> The container sets `HOME=/tmp` so non-root `--user "$(id -u):$(id -g)"` invocations can create temporary configuration directories cleanly while writing output files owned by your host user to the mounted `/workspace` volume.
 
 ---
 
 ## GitHub Actions CI
 
 Automated workflows are included under `.github/workflows/`:
-- **`lint.yml`**: Runs zero-install containerized static analysis on every pull request.
+- **`lint.yml`**: Runs zero-install containerized static analysis, multi-architecture build/smoke verification, and local Trivy vulnerability scanning on every pull request.
 - **`batch.yml`**: Scheduled daily build testing the `main` branch.
 - **`base.yml`**: Multi-platform matrix build across native `ubuntu-latest` (amd64) and `ubuntu-26.04-arm` (arm64) runners with BuildKit GitHub Actions caching.

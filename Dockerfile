@@ -72,6 +72,9 @@ COPY --link --chmod=755 entrypoint.sh /docker-aseprite-entrypoint
 RUN ln -s /docker-aseprite-entrypoint /usr/local/bin/docker-aseprite-entrypoint \
 	&& /docker-aseprite-entrypoint --help
 
+# Ensure non-root --user invocations have a writable HOME for Aseprite config directories.
+ENV HOME=/tmp
+
 WORKDIR /workspace
 
 ENTRYPOINT ["docker-aseprite-entrypoint"]
