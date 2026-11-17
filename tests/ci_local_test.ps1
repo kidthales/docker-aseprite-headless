@@ -216,7 +216,7 @@ try {
     $SandboxRepo = Join-Path $TempRoot "repo"
     New-Item -ItemType Directory -Path (Join-Path $SandboxRepo "scripts") -Force | Out-Null
     Copy-Item -LiteralPath $CiLocalScript -Destination (Join-Path $SandboxRepo "scripts/ci-local.ps1")
-    Set-Content -LiteralPath (Join-Path $SandboxRepo ".gitignore") -Value ".ci-local/`n"
+    Set-Content -LiteralPath (Join-Path $SandboxRepo ".gitignore") -Value ".ci-local/`n.env`n*.lock`n"
     Set-Content -LiteralPath (Join-Path $SandboxRepo "tracked.txt") -Value "initial`n"
 
     & $RealGit -C $SandboxRepo init -q
@@ -308,6 +308,8 @@ try {
     # Case 13 (Negative): task test:unit mutating a .gitignored file (outside .ci-local/) fails Gate 3
     $ignoredEnvFile = Join-Path $SandboxRepo ".env"
     Set-Content -LiteralPath $ignoredEnvFile -Value "SEED=1"
+    & $RealGit -C $SandboxRepo check-ignore -q ".env"
+    Assert-True ($LASTEXITCODE -eq 0) "Expected .env to be gitignored in sandbox repository"
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $ignoredEnvFile }
     Assert-True ($res.ExitCode -ne 0) "Expected mutation of .gitignored file (.env) to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on ignored file mutation"
@@ -321,7 +323,23 @@ try {
     Assert-True ($res.ExitCode -eq 0) "Expected .ci-local/ writes to remain exempt from Gate 3 fingerprint, got $($res.ExitCode): $($res.Output)"
     Remove-Item -LiteralPath $ciLocalDir -Recurse -Force
 
-    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (14/14 cases)"
+    # Case 15 (Boundary): locked/unreadable ignored file does not crash Gate 3
+    $lockedIgnoredFile = Join-Path $SandboxRepo "ignored.lock"
+    $lockStream = [System.IO.File]::Open(
+        $lockedIgnoredFile,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll
+        Assert-True ($res.ExitCode -eq 0) "Expected locked ignored file not to crash Gate 3, got $($res.ExitCode): $($res.Output)"
+    } finally {
+        $lockStream.Dispose()
+        Remove-Item -LiteralPath $lockedIgnoredFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (15/15 cases)"
 } finally {
     if (Test-Path -LiteralPath $TempRoot) {
         Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -206,6 +206,11 @@ if ! grep -Fq -- '--mount=type=cache,target=/root/.ccache,id=ccache-${TARGETARCH
 	exit 1
 fi
 
+if ! grep -Fq 'CCACHE_DIR=/root/.ccache' "$DOCKERFILE"; then
+	printf 'FAIL: Dockerfile must explicitly pin CCACHE_DIR=/root/.ccache\n' >&2
+	exit 1
+fi
+
 if ! grep -Eq 'CCACHE_MAXSIZE=[0-9]+[GM]' "$DOCKERFILE"; then
 	printf 'FAIL: Dockerfile must bound ccache size via CCACHE_MAXSIZE\n' >&2
 	exit 1
@@ -302,6 +307,148 @@ fi
 # shellcheck disable=SC2016
 if ! grep -Fq '/actions/caches/${id}' "$BASE_YML" || ! grep -Fq 'prune-ccache:' "$BASE_YML"; then
 	printf 'FAIL: base.yml must prune older nightly ccache entries to protect the 10GB repo cache budget\n' >&2
+	exit 1
+fi
+
+# Least-privilege permissions scoping: actions: write must not be granted workflow-wide in base.yml or batch.yml
+BATCH_YML="$REPO_ROOT/.github/workflows/batch.yml"
+for wf in "$BASE_YML" "$BATCH_YML"; do
+	top_perms=$(sed -n '/^permissions:/,/^[a-zA-Z]/p' "$wf")
+	if printf '%s\n' "$top_perms" | grep -q 'actions: write'; then
+		printf 'FAIL: %s must not grant actions: write at workflow top level\n' "$wf" >&2
+		exit 1
+	fi
+done
+if ! sed -n '/^  prune-ccache:/,$p' "$BASE_YML" | grep -q 'actions: write'; then
+	printf 'FAIL: base.yml must scope actions: write to the prune-ccache job\n' >&2
+	exit 1
+fi
+
+# Semantic test of the live prune-ccache step in base.yml with mocked gh and jq
+PRUNE_SNIPPET=$(awk '
+	/^  prune-ccache:/ { in_job=1 }
+	in_job && /run: \|/ { in_run=1; next }
+	in_run {
+		if (/^          /) {
+			sub(/^          /, "")
+			print
+		} else if (/^$/) {
+			print ""
+		} else {
+			exit
+		}
+	}
+' "$BASE_YML")
+if [ -z "$PRUNE_SNIPPET" ]; then
+	printf 'FAIL: could not extract prune-ccache script from %s\n' "$BASE_YML" >&2
+	exit 1
+fi
+
+GH_LOG="$TMP_BIN/gh.log"
+cat > "$TMP_BIN/gh" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$GH_LOG"
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "-X" ] && [ "${3:-}" = "DELETE" ]; then
+	if [ "${MOCK_GH_DELETE_FAIL:-0}" = "1" ]; then
+		exit 1
+	fi
+	exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "--paginate" ] && [ "${3:-}" = "--slurp" ]; then
+	url="${4:-}"
+	if [ "${MOCK_GH_LIST_FAIL:-0}" = "1" ]; then
+		exit 1
+	fi
+	case "$url" in
+		*"key=ccache-amd64-main-"*)
+			printf '[{"actions_caches":[{"id":101,"created_at":"2026-11-17T01:00:00Z"},{"id":102,"created_at":"2026-11-16T01:00:00Z"},{"id":103,"created_at":"2026-11-15T01:00:00Z"}]}]\n'
+			;;
+		*"key=ccache-arm64-main-"*)
+			printf '[{"actions_caches":[{"id":201,"created_at":"2026-11-17T01:00:00Z"}]}]\n'
+			;;
+		*)
+			printf '[{"actions_caches":[{"id":301,"key":"buildkit-1","size_in_bytes":3000000000},{"id":302,"key":"buildkit-2","size_in_bytes":2500000000}]}]\n'
+			;;
+	esac
+	exit 0
+fi
+printf 'FAIL: unexpected mock gh args: %s\n' "$*" >&2
+exit 97
+EOF
+chmod +x "$TMP_BIN/gh"
+
+cat > "$TMP_BIN/jq" <<'EOF'
+#!/bin/sh
+set -eu
+cat > /dev/null
+if [ "${MOCK_JQ_FAIL:-0}" = "1" ]; then
+	exit 1
+fi
+# Distinguish query kind from the most recent gh api list call in GH_LOG
+last_url=$(tail -n 1 "$GH_LOG")
+case "$last_url" in
+	*"key=ccache-amd64-main-"*)
+		printf '102\n103\n'
+		;;
+	*"key=ccache-arm64-main-"*)
+		;;
+	*)
+		printf '302\n'
+		;;
+esac
+EOF
+chmod +x "$TMP_BIN/jq"
+
+# Prune Case A (Positive): deletes older amd64 ccache entries (102, 103) and over-budget GHA entry (302), keeps newest (101, 201)
+: > "$GH_LOG"
+PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" bash -c "$PRUNE_SNIPPET"
+for expected_del in \
+	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/102" \
+	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/103" \
+	"api -X DELETE /repos/kidthales/docker-aseprite-headless/actions/caches/302"; do
+	if ! grep -Fq -- "$expected_del" "$GH_LOG"; then
+		printf 'FAIL: prune-ccache missing expected delete: %s\n' "$expected_del" >&2
+		exit 1
+	fi
+done
+for kept_id in 101 201 301; do
+	if grep -Fq -- "/actions/caches/${kept_id}" "$GH_LOG"; then
+		printf 'FAIL: prune-ccache must not delete newest/in-budget cache id %s\n' "$kept_id" >&2
+		exit 1
+	fi
+done
+
+# Prune Case B (Negative): gh api list failure emits ::warning:: and fails non-zero
+: > "$GH_LOG"
+set +e
+warn_out=$(PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" MOCK_GH_LIST_FAIL=1 bash -c "$PRUNE_SNIPPET" 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] || ! printf '%s\n' "$warn_out" | grep -q '::warning::'; then
+	printf 'FAIL: prune-ccache must emit ::warning:: and exit non-zero on list failure (rc=%s)\n' "$rc" >&2
+	exit 1
+fi
+
+# Prune Case C (Negative): jq failure in pipe fails non-zero (pipefail)
+: > "$GH_LOG"
+set +e
+PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" MOCK_JQ_FAIL=1 bash -c "$PRUNE_SNIPPET" >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+	printf 'FAIL: prune-ccache must exit non-zero when jq pipe fails\n' >&2
+	exit 1
+fi
+
+# Prune Case D (Negative): gh api DELETE failure emits ::warning:: and fails non-zero
+: > "$GH_LOG"
+set +e
+warn_out=$(PATH="$TMP_BIN:$PATH" GH_LOG="$GH_LOG" REPO="kidthales/docker-aseprite-headless" MOCK_GH_DELETE_FAIL=1 bash -c "$PRUNE_SNIPPET" 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] || ! printf '%s\n' "$warn_out" | grep -q '::warning::'; then
+	printf 'FAIL: prune-ccache must emit ::warning:: and exit non-zero on delete failure (rc=%s)\n' "$rc" >&2
 	exit 1
 fi
 

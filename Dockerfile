@@ -41,7 +41,7 @@ RUN if ! git clone -b "${aseprite_git_ref}" --depth 1 --recursive --shallow-subm
 WORKDIR /opt/aseprite/build
 
 RUN --mount=type=cache,target=/root/.ccache,id=ccache-${TARGETARCH} \
-	export CC=clang && export CXX=clang++ && export CCACHE_MAXSIZE=2G && ccache -z && cmake \
+	export CC=clang && export CXX=clang++ && export CCACHE_DIR=/root/.ccache && export CCACHE_MAXSIZE=2G && ccache -z && cmake \
 	-DCMAKE_BUILD_TYPE="${aseprite_build_type}" \
 	-DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
 	-DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ \

@@ -89,19 +89,39 @@ function Get-WorkingTreeFingerprint {
         throw "git ls-files --modified --others exited with $LASTEXITCODE."
     }
 
-    $ignoredPaths = @(
-        & git -c core.quotePath=false ls-files --others --ignored --exclude-standard |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '(^|/)\.ci-local/' }
-    )
+    $MaxIgnoredDepth = 5
+    $MaxIgnoredFiles = 200
+    $MaxHashBytes = 10485760
+
+    $rawIgnoredPaths = @(& git -c core.quotePath=false ls-files --others --ignored --exclude-standard)
     if ($LASTEXITCODE -ne 0) {
         throw "git ls-files --others --ignored exited with $LASTEXITCODE."
     }
 
+    $ignoredPaths = @(
+        $rawIgnoredPaths |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and
+                $_ -notmatch '(^|/)\.ci-local/' -and
+                ($_ -split '/').Count -le $MaxIgnoredDepth
+            } |
+            Select-Object -First $MaxIgnoredFiles
+    )
+
     $allPaths = @($dirtyPaths + $ignoredPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     $fileHashes = foreach ($relPath in $allPaths) {
         if (Test-Path -LiteralPath $relPath -PathType Leaf) {
-            $hash = (Get-FileHash -LiteralPath $relPath -Algorithm SHA256).Hash
-            "${relPath}:$hash"
+            try {
+                $item = Get-Item -LiteralPath $relPath -ErrorAction Stop
+                if ($item.Length -gt $MaxHashBytes) {
+                    "${relPath}:LARGE:$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
+                } else {
+                    $hash = (Get-FileHash -LiteralPath $relPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                    "${relPath}:$hash"
+                }
+            } catch {
+                "${relPath}:UNREADABLE"
+            }
         } else {
             "${relPath}:MISSING"
         }

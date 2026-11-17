@@ -55,6 +55,9 @@ jobs:
       - id: buildx
         uses: docker/setup-buildx-action@v4
         with:
+          # Trust decision: mirror.gcr.io is Google's official pull-through cache for docker.io,
+          # mitigating anonymous Docker Hub pull rate limits on GitHub-hosted runners.
+          # Base images track ubuntu:26.04 by tag for upstream security fixes and are Trivy-scanned.
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
