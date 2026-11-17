@@ -20,6 +20,11 @@ tasks:
     desc: Run unit and container smoke tests against built local image
     cmds:
       - task: test:unit
+      - task: test:smoke
+
+  test:smoke:
+    desc: Run container smoke test against built local image
+    cmds:
       - docker run --rm {{.IMAGE_REF}} --version
 
   test:unit:

@@ -89,7 +89,8 @@ $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ci-local-test-" + [Sys
 function New-MockToolchain {
     param(
         [string]$BinDir,
-        [bool]$IncludeDocker = $true
+        [bool]$IncludeDocker = $true,
+        [bool]$IncludePwsh = $true
     )
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
@@ -97,6 +98,9 @@ function New-MockToolchain {
         Set-Content -LiteralPath (Join-Path $BinDir "git.cmd") -Value "@`"$RealGit`" %*" -Encoding Ascii
         if ($IncludeDocker) {
             Set-Content -LiteralPath (Join-Path $BinDir "docker.cmd") -Value "@echo off`r`nexit /b 0" -Encoding Ascii
+        }
+        if ($IncludePwsh) {
+            Set-Content -LiteralPath (Join-Path $BinDir "pwsh.cmd") -Value "@echo off`r`nexit /b 0" -Encoding Ascii
         }
         $taskScript = @'
 @echo off
@@ -127,6 +131,12 @@ exit /b 0
             $dockerPath = Join-Path $BinDir "docker"
             Set-Content -LiteralPath $dockerPath -Value "#!/bin/sh`nexit 0`n" -NoNewline
             & chmod +x $dockerPath
+        }
+
+        if ($IncludePwsh) {
+            $pwshPath = Join-Path $BinDir "pwsh"
+            Set-Content -LiteralPath $pwshPath -Value "#!/bin/sh`nexit 0`n" -NoNewline
+            & chmod +x $pwshPath
         }
 
         $taskSh = @'
@@ -169,18 +179,17 @@ function Invoke-CiLocalInSandbox {
     }
 
     try {
-        if ($IsWin) {
-            $env:PATH = "$BinDir;$env:SystemRoot\System32"
-        } else {
-            $env:PATH = $BinDir
-        }
+        $sandboxPath = if ($IsWin) { "$BinDir;$env:SystemRoot\System32" } else { $BinDir }
+        $env:PATH = $sandboxPath
         $env:GITHUB_ACTIONS = ""
         foreach ($k in $ExtraEnv.Keys) {
             [Environment]::SetEnvironmentVariable($k, $ExtraEnv[$k])
         }
 
         $runner = Join-Path $RepoDir "scripts/ci-local.ps1"
-        $output = (& $RealPwsh -NoProfile -File $runner 2>&1 | Out-String)
+        $env:CI_SANDBOX_PATH = $sandboxPath
+        $env:CI_SANDBOX_RUNNER = $runner
+        $output = (& $RealPwsh -NoProfile -Command '$env:PATH = $env:CI_SANDBOX_PATH; & $env:CI_SANDBOX_RUNNER; exit $LASTEXITCODE' 2>&1 | Out-String)
         return @{
             ExitCode = $LASTEXITCODE
             Output   = $output
@@ -188,6 +197,8 @@ function Invoke-CiLocalInSandbox {
     } finally {
         $env:PATH = $origPath
         $env:GITHUB_ACTIONS = $origGhActions
+        $env:CI_SANDBOX_PATH = $null
+        $env:CI_SANDBOX_RUNNER = $null
         foreach ($k in $ExtraEnv.Keys) {
             [Environment]::SetEnvironmentVariable($k, $savedExtra[$k])
         }
@@ -197,8 +208,10 @@ function Invoke-CiLocalInSandbox {
 try {
     $BinAll = Join-Path $TempRoot "bin-all"
     $BinNoDocker = Join-Path $TempRoot "bin-no-docker"
-    New-MockToolchain -BinDir $BinAll -IncludeDocker $true
-    New-MockToolchain -BinDir $BinNoDocker -IncludeDocker $false
+    $BinNoPwsh = Join-Path $TempRoot "bin-no-pwsh"
+    New-MockToolchain -BinDir $BinAll -IncludeDocker $true -IncludePwsh $true
+    New-MockToolchain -BinDir $BinNoDocker -IncludeDocker $false -IncludePwsh $true
+    New-MockToolchain -BinDir $BinNoPwsh -IncludeDocker $true -IncludePwsh $false
 
     $SandboxRepo = Join-Path $TempRoot "repo"
     New-Item -ItemType Directory -Path (Join-Path $SandboxRepo "scripts") -Force | Out-Null
@@ -257,29 +270,34 @@ try {
     Assert-True ($res.ExitCode -ne 0) "Expected missing docker tool to fail"
     Assert-True ($res.Output -match "missing 'docker'") "Expected missing 'docker' error message"
 
-    # Case 7 (Negative): task lint failure fails Gate 2
+    # Case 7 (Negative): missing pwsh prerequisite fails upfront
+    $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinNoPwsh
+    Assert-True ($res.ExitCode -ne 0) "Expected missing pwsh tool to fail"
+    Assert-True ($res.Output -match "missing 'pwsh'") "Expected missing 'pwsh' error message"
+
+    # Case 8 (Negative): task lint failure fails Gate 2
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_FAIL_LINT = "2" }
     Assert-True ($res.ExitCode -ne 0) "Expected task lint failure to fail Gate 2"
     Assert-True ($res.Output -match "\[gate2_task_lint: FAIL\]") "Expected gate2 FAIL"
 
-    # Case 8 (Negative): task test:unit failure fails Gate 3
+    # Case 9 (Negative): task test:unit failure fails Gate 3
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_FAIL_UNIT = "3" }
     Assert-True ($res.ExitCode -ne 0) "Expected task test:unit failure to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL"
 
-    # Case 9 (Negative): task test:pwsh failure fails Gate 3
+    # Case 10 (Negative): task test:pwsh failure fails Gate 3
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_FAIL_PWSH = "4" }
     Assert-True ($res.ExitCode -ne 0) "Expected task test:pwsh failure to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on test:pwsh"
 
-    # Case 10 (Negative): task test:unit creating an untracked file fails Gate 3
+    # Case 11 (Negative): task test:unit creating an untracked file fails Gate 3
     $createdFile = Join-Path $SandboxRepo "created-by-test.txt"
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_CREATE_FILE = $createdFile }
     Assert-True ($res.ExitCode -ne 0) "Expected side-effect file creation to fail Gate 3"
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on created file"
     Remove-Item -LiteralPath $createdFile -Force
 
-    # Case 11 (Negative): task test:unit mutating an ALREADY-dirty file fails Gate 3
+    # Case 12 (Negative): task test:unit mutating an ALREADY-dirty file fails Gate 3
     $trackedFile = Join-Path $SandboxRepo "tracked.txt"
     Add-Content -LiteralPath $trackedFile -Value "pre-existing-dirty-edit"
     $res = Invoke-CiLocalInSandbox -RepoDir $SandboxRepo -BinDir $BinAll -ExtraEnv @{ MOCK_APPEND_FILE = $trackedFile }
@@ -287,7 +305,7 @@ try {
     Assert-True ($res.Output -match "\[gate3_unit_tests: FAIL\]") "Expected gate3 FAIL on dirty file content mutation"
     & $RealGit -C $SandboxRepo checkout -- tracked.txt
 
-    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (11/11 cases)"
+    Write-Host "PASS: ci-local.ps1 regex, boundary, and negative-path tests passed (12/12 cases)"
 } finally {
     if (Test-Path -LiteralPath $TempRoot) {
         Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue

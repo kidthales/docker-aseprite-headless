@@ -129,7 +129,9 @@ try {
         @{ Name = "git"; Hint = "Install Git and ensure 'git' is on PATH." },
         @{ Name = "task"; Hint = "Install go-task (Taskfile) and ensure 'task' is on PATH." },
         # Required by containerized 'task lint' and 'task test:unit' sub-tasks.
-        @{ Name = "docker"; Hint = "Install Docker Desktop / Engine and ensure 'docker' is on PATH." }
+        @{ Name = "docker"; Hint = "Install Docker Desktop / Engine and ensure 'docker' is on PATH." },
+        # Required by 'task test:pwsh' in Gate 3 (for example when invoked from Windows PowerShell 5.1).
+        @{ Name = "pwsh"; Hint = "Install PowerShell 7+ and ensure 'pwsh' is on PATH." }
     )
     foreach ($tool in $requiredTools) {
         if (-not (Get-Command $tool.Name -ErrorAction SilentlyContinue)) {
