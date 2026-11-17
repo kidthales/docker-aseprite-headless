@@ -108,15 +108,27 @@ function Get-WorkingTreeFingerprint {
             Select-Object -First $MaxIgnoredFiles
     )
 
+    $cwd = (Get-Location).ProviderPath
     $allPaths = @($dirtyPaths + $ignoredPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     $fileHashes = foreach ($relPath in $allPaths) {
-        if (Test-Path -LiteralPath $relPath -PathType Leaf) {
+        $fullPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($cwd, $relPath))
+        if ([System.IO.File]::Exists($fullPath)) {
             try {
-                $item = Get-Item -LiteralPath $relPath -ErrorAction Stop
+                $item = [System.IO.FileInfo]::new($fullPath)
                 if ($item.Length -gt $MaxHashBytes) {
                     "${relPath}:LARGE:$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
                 } else {
-                    $hash = (Get-FileHash -LiteralPath $relPath -Algorithm SHA256 -ErrorAction Stop).Hash
+                    $stream = [System.IO.File]::OpenRead($fullPath)
+                    try {
+                        $sha = [System.Security.Cryptography.SHA256]::Create()
+                        try {
+                            $hash = ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '')
+                        } finally {
+                            $sha.Dispose()
+                        }
+                    } finally {
+                        $stream.Dispose()
+                    }
                     "${relPath}:$hash"
                 }
             } catch {
