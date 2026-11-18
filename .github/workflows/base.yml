@@ -156,6 +156,10 @@ jobs:
     if: needs.check-tag.outputs.skip_build != 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .trivyignore
+          sparse-checkout-cone-mode: false
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
