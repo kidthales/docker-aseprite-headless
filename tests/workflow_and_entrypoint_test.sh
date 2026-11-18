@@ -459,4 +459,86 @@ if ! grep -Fq 'reproducible-containers/buildkit-cache-dance@' "$LINT_YML" || ! g
 	exit 1
 fi
 
+assert_trivy_jobs_have_checkout() {
+	wf="$1"
+	awk '
+		function check_job() {
+			if (job != "" && has_trivyignores) {
+				trivy_jobs++
+				if (missing_checkout) {
+					printf "FAIL: %s job \"%s\" configures trivyignores without a preceding actions/checkout step\n", FILENAME, job > "/dev/stderr"
+					failed = 1
+				}
+			}
+		}
+		/^[ \t]*#/ { next }
+		/^jobs:[ \t]*(#.*)?$/ { in_jobs = 1; next }
+		/^[A-Za-z0-9_-]+:/ {
+			if (in_jobs) {
+				check_job()
+				job = ""
+				in_jobs = 0
+			}
+			next
+		}
+		in_jobs && /^  [A-Za-z0-9_-]+:[ \t]*(#.*)?$/ {
+			check_job()
+			job = $1
+			sub(/:.*/, "", job)
+			has_checkout = 0
+			has_trivyignores = 0
+			missing_checkout = 0
+			next
+		}
+		in_jobs && job != "" {
+			if ($0 ~ /^[ \t]*(-[ \t]+)?uses:[ \t]*['\''"]?actions\/checkout@/) {
+				has_checkout = 1
+			}
+			if ($0 ~ /^[ \t]*trivyignores:[ \t]*/) {
+				has_trivyignores = 1
+				if (!has_checkout) {
+					missing_checkout = 1
+				}
+			}
+		}
+		END {
+			check_job()
+			if (!failed && trivy_jobs == 0) {
+				printf "FAIL: %s did not match any trivyignores job\n", FILENAME > "/dev/stderr"
+				failed = 1
+			}
+			exit failed
+		}
+	' "$wf"
+}
+
+for wf in "$LINT_YML" "$BASE_YML"; do
+	assert_trivy_jobs_have_checkout "$wf"
+done
+
+printf '%s\n' \
+	'jobs:' \
+	'  merge-manifests:' \
+	'    steps:' \
+	'      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25' \
+	'        with:' \
+	"          trivyignores: '.trivyignore'" > "$TMP_BIN/missing-checkout.yml"
+if assert_trivy_jobs_have_checkout "$TMP_BIN/missing-checkout.yml" 2>/dev/null; then
+	printf 'FAIL: expected trivyignores guard to fail when actions/checkout is missing\n' >&2
+	exit 1
+fi
+
+printf '%s\n' \
+	'jobs:' \
+	'  merge-manifests:' \
+	'    steps:' \
+	'      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25' \
+	'        with:' \
+	"          trivyignores: '.trivyignore'" \
+	'      - uses: actions/checkout@v7' > "$TMP_BIN/late-checkout.yml"
+if assert_trivy_jobs_have_checkout "$TMP_BIN/late-checkout.yml" 2>/dev/null; then
+	printf 'FAIL: expected trivyignores guard to fail when actions/checkout follows trivyignores\n' >&2
+	exit 1
+fi
+
 printf 'PASS: workflow retention regex, entrypoint, Dockerfile, and CI invariant tests passed\n'
